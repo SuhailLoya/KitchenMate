@@ -8,6 +8,9 @@ import {
   ListItemText,
   Container,
   Button,
+  SpeedDial,
+  SpeedDialIcon,
+  SpeedDialAction,
 } from "@mui/material";
 import { useVideoStream } from "../../hooks/useVideoStream";
 import ChefAvatar from "../Chef/ChefAvatar";
@@ -23,6 +26,8 @@ import "@fontsource/poppins/700.css"; // Bold
 import "@fontsource/poppins/600.css"; // Semi-bold
 import "@fontsource/inter/400.css"; // Regular
 import "@fontsource/inter/500.css"; // Medium
+import TranslateIcon from '@mui/icons-material/Translate';
+import type { VoiceLocale } from '../../services/tts';
 
 const gemini = new GeminiService(import.meta.env.VITE_GEMINI_API_KEY);
 const tts = new TTSService(import.meta.env.VITE_GOOGLE_CLOUD_API_KEY);
@@ -124,6 +129,12 @@ const phaseTextAnimation = {
   },
 };
 
+const localeNames: Record<VoiceLocale, string> = {
+  'it-IT': 'Italian',
+  'zh-CN': 'Chinese',
+  'en-US': 'English'
+};
+
 const VideoStream = () => {
   const { videoRef, captureImage } = useVideoStream();
   const [analysis, setAnalysis] = useState<string>("");
@@ -157,6 +168,15 @@ const VideoStream = () => {
   const [showCompletionDialog, setShowCompletionDialog] = useState(false);
   const startTimeRef = useRef<Date>(new Date());
   const [finalImage, setFinalImage] = useState<Blob | null>(null);
+
+  const [currentLocale, setCurrentLocale] = useState<VoiceLocale>('en-US');
+
+  const [isCompleted, setIsCompleted] = useState(false);
+
+  const handleLocaleChange = (newLocale: VoiceLocale) => {
+    setCurrentLocale(newLocale);
+    tts.setLocale(newLocale);
+  };
 
   const updateProgress = (text: string) => {
     if (preparationPhase) {
@@ -449,6 +469,7 @@ const VideoStream = () => {
   // Add completion check to analyzeStream
   const checkCompletion = async () => {
     if (!preparationPhase && steps.every((step) => step.completed)) {
+      setIsCompleted(true);
       const endTime = new Date();
       const totalMinutes = Math.round(
         (endTime.getTime() - startTimeRef.current.getTime()) / 60000
@@ -625,7 +646,7 @@ const VideoStream = () => {
               borderRadius: '12px',
             }}
           >
-            <ChefAvatar speaking={speaking} />
+            <ChefAvatar speaking={speaking} locale={currentLocale} />
           </Box>
         </Box>
 
@@ -648,13 +669,14 @@ const VideoStream = () => {
               borderRadius: 2,
               overflow: 'hidden',
               position: 'relative',
+              filter: isCompleted ? 'brightness(0.5)' : 'none',
             }}
           >
             <video
               ref={videoRef}
               autoPlay
               playsInline
-              muted
+              muted={isCompleted}
               style={{
                 width: '100%',
                 height: '100%',
@@ -694,17 +716,67 @@ const VideoStream = () => {
       </Box>
 
       {/* CompletionDialog */}
-      <CompletionDialog
-        open={showCompletionDialog}
-        stats={recipeStats}
-        ingredients={ingredients}
-        steps={steps}
-        finalImage={finalImage}
-        onClose={() => {
-          setShowCompletionDialog(false);
-          setFinalImage(null);
+      <Box
+        sx={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          backgroundColor: 'rgba(0, 0, 0, 0.7)',
+          zIndex: 1000,
+          display: showCompletionDialog ? 'block' : 'none',
         }}
-      />
+      >
+        <CompletionDialog
+          open={showCompletionDialog}
+          stats={recipeStats}
+          ingredients={ingredients}
+          steps={steps}
+          finalImage={finalImage}
+          onClose={() => {
+            setShowCompletionDialog(false);
+            setFinalImage(null);
+            setIsCompleted(false);
+          }}
+        />
+      </Box>
+
+      <SpeedDial
+        ariaLabel="Voice Locale SpeedDial"
+        sx={{
+          position: 'fixed',
+          bottom: 16,
+          right: 16,
+        }}
+        icon={<SpeedDialIcon icon={<TranslateIcon />} />}
+      >
+        {(Object.keys(localeNames) as VoiceLocale[]).map((locale) => (
+          <SpeedDialAction
+            key={locale}
+            icon={
+              <Box
+                sx={{
+                  width: 32,
+                  height: 32,
+                  borderRadius: '50%',
+                  border: locale === currentLocale ? '2px solid #FF6B35' : 'none',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  fontWeight: 600,
+                  fontSize: '0.8rem',
+                  color: locale === currentLocale ? '#FF6B35' : 'inherit',
+                }}
+              >
+                {locale.split('-')[0].toUpperCase()}
+              </Box>
+            }
+            tooltipTitle={localeNames[locale]}
+            onClick={() => handleLocaleChange(locale)}
+          />
+        ))}
+      </SpeedDial>
     </Box>
   );
 };

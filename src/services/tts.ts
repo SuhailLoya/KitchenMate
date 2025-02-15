@@ -1,133 +1,138 @@
-export class TTSService {
-  private audio: HTMLAudioElement | null = null;
-  private audioContext: AudioContext | null = null;
-  private isPlaying = false;
-  private audioQueue: string[] = [];
+export type VoiceLocale = "it-IT" | "zh-CN" | "en-US";
 
-  constructor(private apiKey: string) {
-    // Initialize audio context on user interaction
-    document.addEventListener('click', () => {
-      if (!this.audioContext) {
-        this.audioContext = new AudioContext();
-      }
-    });
+interface VoiceConfig {
+  name: string;
+  pitch: number;
+  speakingRate: number;
+  effectsProfileId?: string[];
+}
+
+// Update default config to use English
+const defaultConfig: VoiceConfig = {
+  name: "en-US-Neural2-D",
+  pitch: 0,
+  speakingRate: 1,
+  effectsProfileId: ["small-bluetooth-speaker-class-device"],
+};
+
+const voiceConfigs: Record<VoiceLocale, VoiceConfig> = {
+  "it-IT": {
+    name: "it-IT-Neural2-F",
+    pitch: 0,
+    speakingRate: 1,
+    effectsProfileId: ["small-bluetooth-speaker-class-device"],
+  },
+  "zh-CN": {
+    name: "cmn-CN-Wavenet-B",
+    pitch: 0,
+    speakingRate: 1,
+    effectsProfileId: ["small-bluetooth-speaker-class-device"],
+  },
+  "en-US": {
+    name: "en-US-Neural2-D",
+    pitch: 0,
+    speakingRate: 1,
+    effectsProfileId: ["small-bluetooth-speaker-class-device"],
+  },
+};
+
+export class TTSService {
+  private synthesis: SpeechSynthesis;
+  private currentLocale: VoiceLocale = "en-US";
+  private apiKey: string;
+
+  constructor(apiKey: string) {
+    this.synthesis = window.speechSynthesis;
+    this.apiKey = apiKey;
+  }
+
+  setLocale(locale: VoiceLocale) {
+    if (!voiceConfigs[locale]) {
+      console.warn(
+        `Voice config not found for locale ${locale}, using default`
+      );
+    }
+    this.currentLocale = locale;
   }
 
   async speak(text: string): Promise<void> {
-    // Add to queue if currently playing
-    if (this.isPlaying) {
-      this.audioQueue.push(text);
+    if (!text) {
+      console.warn("Empty text provided to speak");
       return;
     }
 
+    // Get config with fallback to default
+    const config = voiceConfigs[this.currentLocale] || defaultConfig;
+
+    // Create base request body
+    const requestBody: any = {
+      audioConfig: {
+        audioEncoding: "LINEAR16",
+        pitch: config.pitch,
+        speakingRate: config.speakingRate,
+      },
+      input: {
+        text: text,
+      },
+      voice: {
+        languageCode: this.currentLocale,
+        name: config.name,
+      },
+    };
+
+    // Only add effectsProfileId if it exists
+    if (config.effectsProfileId) {
+      requestBody.audioConfig.effectsProfileId = config.effectsProfileId;
+    }
+
     try {
-      this.isPlaying = true;
-      console.log('Fetching TTS audio for:', text);
-
-      if (!this.audioContext) {
-        this.audioContext = new AudioContext();
-      }
-
-      if (this.audioContext.state === 'suspended') {
-        await this.audioContext.resume();
-      }
-
       const response = await fetch(
         `https://texttospeech.googleapis.com/v1/text:synthesize?key=${this.apiKey}`,
         {
-          method: 'POST',
+          method: "POST",
           headers: {
-            'Content-Type': 'application/json',
+            "Content-Type": "application/json",
           },
-          body: JSON.stringify({
-            input: { text },
-            voice: {
-              languageCode: 'en-US',
-              name: 'en-US-Standard-D',
-              ssmlGender: 'MALE'
-            },
-            audioConfig: {
-              audioEncoding: 'MP3',
-              pitch: 0,
-              speakingRate: 1.1,
-              volumeGainDb: 3.0
-            },
-          }),
+          body: JSON.stringify(requestBody),
         }
       );
 
       if (!response.ok) {
-        throw new Error(`TTS API error: ${response.status}`);
+        throw new Error(`HTTP error! status: ${response.status}`);
       }
 
-      const { audioContent } = await response.json();
-      console.log('Received audio content');
+      const data = await response.json();
+      if (!data.audioContent) {
+        throw new Error("No audio content received from API");
+      }
 
-      // Clean up previous audio
-      this.stop();
-
+      // Convert base64 to audio and play it
+      const audioContent = data.audioContent;
       const audioBlob = new Blob(
-        [Uint8Array.from(atob(audioContent), c => c.charCodeAt(0))],
-        { type: 'audio/mp3' }
+        [Uint8Array.from(atob(audioContent), (c) => c.charCodeAt(0))],
+        { type: "audio/mp3" }
       );
       const audioUrl = URL.createObjectURL(audioBlob);
-      this.audio = new Audio(audioUrl);
-      this.audio.volume = 1.0;
+      const audio = new Audio(audioUrl);
 
-      // Set up event listeners
-      this.audio.addEventListener('ended', () => {
-        console.log('Audio finished playing');
-        URL.revokeObjectURL(audioUrl);
-        this.audio = null;
-        this.isPlaying = false;
-        
-        // Play next in queue if exists
-        if (this.audioQueue.length > 0) {
-          const nextText = this.audioQueue.shift();
-          if (nextText) {
-            this.speak(nextText);
-          }
-        }
+      return new Promise((resolve, reject) => {
+        audio.onended = () => {
+          URL.revokeObjectURL(audioUrl);
+          resolve();
+        };
+        audio.onerror = (error) => {
+          URL.revokeObjectURL(audioUrl);
+          reject(error);
+        };
+        audio.play().catch(reject);
       });
-
-      this.audio.addEventListener('error', (e) => {
-        console.error('Audio playback error:', e);
-        this.isPlaying = false;
-      });
-
-      // Play the audio
-      await this.audio.play();
-      console.log('Audio started playing');
-
     } catch (error) {
-      console.error('TTS failed:', error);
-      this.isPlaying = false;
+      console.error("TTS API Error:", error);
       throw error;
     }
   }
 
-  private handleAutoplayBlocked(audio: HTMLAudioElement, audioUrl: string) {
-    console.log('Autoplay blocked, adding play button');
-    const playButton = document.createElement('button');
-    playButton.textContent = 'Play Message';
-    playButton.onclick = async () => {
-      try {
-        await audio.play();
-        playButton.remove();
-      } catch (error) {
-        console.error('Manual play failed:', error);
-      }
-    };
-    document.body.appendChild(playButton);
-  }
-
   stop() {
-    if (this.audio) {
-      this.audio.pause();
-      this.audio.currentTime = 0; // Reset playback position
-      this.audio = null;
-    }
-    this.isPlaying = false;
-    this.audioQueue = []; // Clear the queue
+    this.synthesis.cancel();
   }
-} 
+}
