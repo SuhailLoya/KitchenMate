@@ -45,9 +45,9 @@ interface RecipeItem {
 }
 
 const initialIngredients: RecipeItem[] = [
-    { text: "3 fresh eggs", completed: false },
-    { text: "1 cup butter", completed: false },
-    { text: "1 cup milk", completed: false },
+  { text: "3 fresh eggs", completed: false },
+  { text: "1 cup butter", completed: false },
+  { text: "1 cup milk", completed: false },
 ];
 
 const initialSteps: RecipeItem[] = [
