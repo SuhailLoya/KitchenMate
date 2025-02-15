@@ -1,0 +1,1 @@
+-- Run the database_schema.sql contents in Supabase SQL editor 
