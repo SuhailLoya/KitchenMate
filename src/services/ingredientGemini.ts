@@ -9,51 +9,64 @@ export class IngredientGeminiService {
     this.model = this.genAI.getGenerativeModel({
       model: "gemini-1.5-flash",
       generationConfig: {
-        temperature: 0.3, // Lower temperature for more precise ingredient detection
+        temperature: 0.2, // Lower temperature for more precise ingredient detection
         topP: 0.8,
         topK: 40,
-        maxOutputTokens: 200,
+        maxOutputTokens: 400,
       },
     });
   }
 
-  async analyzeImage(image: Blob, ingredients: { text: string; completed: boolean }[], seenHistory: string) {
+  async analyzeImage(
+    image: Blob,
+    ingredients: { text: string; completed: boolean }[],
+    seenHistory: string
+  ) {
     try {
-      console.log("Starting Ingredient Analysis...");
-      
+      console.log("=== Starting Ingredient Analysis ===");
+      console.log("Current seenHistory:", seenHistory);
+      console.log("Current ingredients state:", ingredients);
+
       const context = `You are a friendly chef assistant helping someone gather ingredients for a cake.
         
         Required ingredients (EXACT format to use when listing ingredients):
-        ${ingredients.map(i => `- ${i.text}`).join('\n')}
+        ${ingredients.map((i) => `- ${i.text}`).join("\n")}
 
         Previously seen ingredients:
-        ${seenHistory}
+        ${seenHistory || "No ingredients seen yet"}
         
         IMPORTANT: Structure your response EXACTLY as follows and use the EXACT ingredient names and quantities from the list above:
         
         I saw: [List ALL previously seen ingredients using their exact names from the list]
         I see: [List ONLY the ingredients you can CURRENTLY see in the image, using their exact names from the list. Each on a new line with a dash prefix]
-        I say: [Your friendly response about progress]
+        I say: [Your friendly response about progress, please only mention the remaining ingredients not in "Previously seen ingredients:"]
 
         Example response format:
-        I saw: Previously I've seen 3 eggs and 2 cups all-purpose flour
+        I saw: Previously I've seen <PREVIOUSLY SEEN INGREDIENTS>
         I see:
-        - 3 eggs
-        - 1 cup butter
-        I say: Great! I can see the eggs and butter. You still need milk, sugar, and flour.
+        - MOST CONFIDENT INGREDIENT IN PICTURE
+        I say: Great! I can see the <INGREDIENTS IN PICTURE>. You still need (<REMAINING INGREDIENTS> WITHOUT <MOST CONFIDENT INGREDIENT IN PICTURE>) 
 
         CRITICAL RULES:
         1. When listing ingredients in "I see:", use EXACTLY the same text as shown in Required ingredients
-        2. Only list ingredients you are 100% certain about seeing in the current image
-        3. Match quantities exactly - don't list an ingredient if the quantity doesn't match
-        4. Each ingredient in "I see:" must start with "- " and be on a new line
-        5. Don't abbreviate or modify the ingredient names
+        2. Only list ingredients you are 100% certain about seeing in the current image. Do not mention ingredient if you are not sure.
+        3. You MUST only see your most confident ingredient in the current image.
+        4. Don't abbreviate or modify the ingredient names
+
 
         Current image analysis starting now.`;
 
+      console.log("=== Context being sent to Gemini ===");
+      console.log(context);
+
       const imageData = await this.blobToGenerativePart(image);
       const result = await this.model.generateContent([context, imageData]);
-      return result.response.text();
+      const response = result.response.text();
+
+      console.log("=== Gemini Response ===");
+      console.log(response);
+
+      return response;
     } catch (error) {
       console.error("Ingredient analysis failed:", error);
       throw error;
@@ -78,4 +91,4 @@ export class IngredientGeminiService {
       },
     };
   }
-} 
+}

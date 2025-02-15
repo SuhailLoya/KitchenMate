@@ -3,6 +3,7 @@ import { motion } from "framer-motion";
 import italianChef from "../../images/chef_avatars/italian.png";
 import chineseChef from "../../images/chef_avatars/chinese.png";
 import englishChef from "../../images/chef_avatars/english.png";
+import grandmaChef from "../../images/chef_avatars/grandma.png";
 import type { VoiceLocale } from '../../services/tts';
 
 interface ChefAvatarProps {
@@ -14,6 +15,7 @@ const chefImages: Record<VoiceLocale, string> = {
   "it-IT": italianChef,
   "zh-CN": chineseChef,
   "en-US": englishChef,
+  "grandma": grandmaChef,
 };
 
 const ChefAvatar = ({ speaking, locale }: ChefAvatarProps) => {

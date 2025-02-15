@@ -1,4 +1,4 @@
-export type VoiceLocale = "it-IT" | "zh-CN" | "en-US";
+export type VoiceLocale = "it-IT" | "zh-CN" | "en-US" | "grandma";
 
 interface VoiceConfig {
   name: string;
@@ -7,9 +7,9 @@ interface VoiceConfig {
   effectsProfileId?: string[];
 }
 
-// Update default config to use English
+// Update default config to use grandma voice
 const defaultConfig: VoiceConfig = {
-  name: "en-US-Neural2-D",
+  name: "ms-MY-Wavenet-C",
   pitch: 0,
   speakingRate: 1,
   effectsProfileId: ["small-bluetooth-speaker-class-device"],
@@ -34,11 +34,17 @@ const voiceConfigs: Record<VoiceLocale, VoiceConfig> = {
     speakingRate: 1,
     effectsProfileId: ["small-bluetooth-speaker-class-device"],
   },
+  grandma: {
+    name: "ms-MY-Wavenet-C", // Using female voice for grandma
+    pitch: -3, // Lower pitch for older voice
+    speakingRate: 1.2, // Slightly slower speaking rate
+    effectsProfileId: ["small-bluetooth-speaker-class-device"],
+  },
 };
 
 export class TTSService {
   private synthesis: SpeechSynthesis;
-  private currentLocale: VoiceLocale = "en-US";
+  private currentLocale: VoiceLocale = "grandma";
   private apiKey: string;
 
   constructor(apiKey: string) {

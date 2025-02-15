@@ -26,8 +26,9 @@ import "@fontsource/poppins/700.css"; // Bold
 import "@fontsource/poppins/600.css"; // Semi-bold
 import "@fontsource/inter/400.css"; // Regular
 import "@fontsource/inter/500.css"; // Medium
-import TranslateIcon from '@mui/icons-material/Translate';
-import type { VoiceLocale } from '../../services/tts';
+import TranslateIcon from "@mui/icons-material/Translate";
+import type { VoiceLocale } from "../../services/tts";
+import Timer from "../Timer/Timer";
 
 const gemini = new GeminiService(import.meta.env.VITE_GEMINI_API_KEY);
 const tts = new TTSService(import.meta.env.VITE_GOOGLE_CLOUD_API_KEY);
@@ -44,16 +45,18 @@ interface RecipeItem {
 }
 
 const initialIngredients: RecipeItem[] = [
-  { text: "3 eggs", completed: false },
-  { text: "1 cup butter", completed: false },
-  { text: "1 cup milk", completed: false },
+  //   { text: "3 fresh eggs", completed: false },
+  //   { text: "1 cup butter", completed: false },
+  //   { text: "1 cup milk", completed: false },
 ];
 
 const initialSteps: RecipeItem[] = [
+  //   { text: "Crack 3 eggs into a large mixing bowl", completed: false },
+  //   { text: "Pour 1 cup of milk into the bowl", completed: false },
+  //   //   { text: "Add 1 cup of sugar to the mixture", completed: false },
+  //   { text: "Mix in the butter", completed: false },
+  { text: "Bake the mixture in the oven for 10 minutes", completed: false },
   { text: "Crack 3 eggs into a large mixing bowl", completed: false },
-  //   { text: "Pour 1 cup of milk into the bowl with eggs", completed: false },
-  //   { text: "Add 1 cup of sugar to the mixture", completed: false },
-  //   { text: "Mix in 1 cup of melted butter", completed: false },
   //   { text: "Gradually add 2 cups of flour while stirring", completed: false },
 ];
 
@@ -130,9 +133,10 @@ const phaseTextAnimation = {
 };
 
 const localeNames: Record<VoiceLocale, string> = {
-  'it-IT': 'Italian',
-  'zh-CN': 'Chinese',
-  'en-US': 'English'
+  "it-IT": "Italian",
+  "zh-CN": "Chinese",
+  "en-US": "English",
+  grandma: "Grandma",
 };
 
 const VideoStream = () => {
@@ -150,7 +154,6 @@ const VideoStream = () => {
     string | null
   >(null);
   const [seenHistory, setSeenHistory] = useState<string>("");
-  const seenIngredientsRef = useRef<Map<string, string>>(new Map());
   const [seenIngredients, setSeenIngredients] = useState<Map<string, string>>(
     new Map()
   );
@@ -169,22 +172,70 @@ const VideoStream = () => {
   const startTimeRef = useRef<Date>(new Date());
   const [finalImage, setFinalImage] = useState<Blob | null>(null);
 
-  const [currentLocale, setCurrentLocale] = useState<VoiceLocale>('en-US');
+  const [currentLocale, setCurrentLocale] = useState<VoiceLocale>("grandma");
 
   const [isCompleted, setIsCompleted] = useState(false);
 
-  const handleLocaleChange = (newLocale: VoiceLocale) => {
-    setCurrentLocale(newLocale);
-    tts.setLocale(newLocale);
+  // Add new state for tracking last spoken ingredient
+  const [lastSpokenIngredient, setLastSpokenIngredient] = useState<
+    string | null
+  >(null);
+
+  // Add new state for timer
+  const [showTimer, setShowTimer] = useState(false);
+
+  const handleLocaleChange = async (newLocale: VoiceLocale) => {
+    try {
+      // Stop all audio and analysis
+      tts.stop();
+      clearPendingAnalysis();
+      analysisInProgress.current = false;
+
+      // Wait a moment to ensure all audio has stopped
+      await new Promise((resolve) => setTimeout(resolve, 100));
+
+      // Update locale
+      setCurrentLocale(newLocale);
+      tts.setLocale(newLocale);
+
+      // Clear states
+      setAnalysis("");
+      setSpeaking(false);
+      setIsAnalyzing(false);
+
+      // Ensure we're not speaking before starting new greeting
+      if (!speaking) {
+        setSpeaking(true);
+        await tts.speak("Hello! I'm your new cooking assistant!");
+        setSpeaking(false);
+
+        // Only restart analysis after speaking is complete
+        await analyzeStream();
+      }
+    } catch (error) {
+      console.error("Error during voice change:", error);
+      setSpeaking(false);
+    }
   };
 
   const updateProgress = (text: string) => {
     if (preparationPhase) {
-      // Extract the "I see:" section
-      const seeSection = text.split("I see:")[1]?.split("I say:")[0]?.trim();
-      if (!seeSection) return;
+      console.log("=== Updating Progress ===");
+      console.log("Current ingredients state:", ingredients);
+      console.log("Current seenHistory:", seenHistory);
+      console.log(
+        "Current seenIngredients:",
+        Array.from(seenIngredients.entries())
+      );
 
-      // Parse the ingredients Gemini currently sees
+      const seeSection = text.split("I see:")[1]?.split("I say:")[0]?.trim();
+      if (!seeSection) {
+        console.log("No 'I see' section found in response");
+        return;
+      }
+
+      console.log("Extracted 'I see' section:", seeSection);
+
       const currentlySeenIngredients = seeSection
         .split("\n")
         .map((line) => line.trim())
@@ -193,57 +244,97 @@ const VideoStream = () => {
 
       console.log("Currently seen ingredients:", currentlySeenIngredients);
 
-      // Update both state and ref with new ingredients
-      const newMap = new Map(seenIngredientsRef.current);
-      currentlySeenIngredients.forEach((ing) => {
-        const key = ing.toLowerCase();
-        if (!newMap.has(key)) {
-          newMap.set(key, ing); // Store original text
-          console.log(`Adding new ingredient to history: ${ing}`);
-        }
-      });
-
-      seenIngredientsRef.current = newMap;
-      setSeenIngredients(newMap);
-      console.log("Updated seen ingredients:", Array.from(newMap.values()));
-
-      // Update ingredients based on what Gemini actually sees
-      setIngredients((prev) =>
-        prev.map((item) => {
+      // Update ingredients state first
+      setIngredients((prev) => {
+        const updatedIngredients = prev.map((item) => {
           const itemText = item.text.toLowerCase();
           const isCurrentlySeen = currentlySeenIngredients.some((seen) => {
             const seenLower = seen.toLowerCase();
-            const [itemQuantity, ...itemWords] = itemText.split(" ");
-            const [seenQuantity, ...seenWords] = seenLower.split(" ");
-
-            return (
-              itemQuantity === seenQuantity &&
-              seenWords.join(" ").includes(itemWords.join(" "))
-            );
+            return seenLower === itemText;
           });
 
           if (isCurrentlySeen && !item.completed) {
-            setLastCompletedIngredient(item.text);
+            console.log(`Marking ingredient as completed: ${item.text}`);
           }
 
           return {
             ...item,
             completed: item.completed || isCurrentlySeen,
           };
-        })
+        });
+
+        console.log("Updated ingredients state:", updatedIngredients);
+        return updatedIngredients;
+      });
+
+      // Then update seenIngredients
+      setSeenIngredients((prevMap) => {
+        const newMap = new Map(prevMap);
+        currentlySeenIngredients.forEach((ing) => {
+          const key = ing.toLowerCase();
+          if (!newMap.has(key)) {
+            console.log(`Adding new ingredient to seenIngredients: ${ing}`);
+            newMap.set(key, ing);
+          }
+        });
+        return newMap;
+      });
+
+      // Update seenHistory based on seenIngredients
+      const newHistory = Array.from(seenIngredients.values())
+        .map((ing) => `- ${ing}`)
+        .join("\n");
+
+      console.log("Updated seenHistory:", newHistory);
+      setSeenHistory(newHistory);
+
+      // Handle TTS feedback
+      const newlyCompletedIngredient = currentlySeenIngredients.find(
+        (ing) => !Array.from(seenIngredients.values()).includes(ing)
       );
 
-      // Recipe steps remain the same...
-      setSteps((prev) =>
-        prev.map((item) => {
-          // ... existing step logic
-          return item;
-        })
-      );
+      if (
+        newlyCompletedIngredient &&
+        newlyCompletedIngredient !== lastSpokenIngredient
+      ) {
+        setLastSpokenIngredient(newlyCompletedIngredient);
+        setLastCompletedIngredient(newlyCompletedIngredient);
+
+        // Find next incomplete ingredient
+        const nextIngredient = ingredients.find((item) => !item.completed);
+
+        // Construct feedback message
+        let message = `Great! I see the ${newlyCompletedIngredient}.`;
+        if (nextIngredient) {
+          message += ` Next, please show me the ${nextIngredient.text}.`;
+        } else if (!allIngredientsReady) {
+          message += " Please show me the remaining ingredients.";
+        }
+
+        // Speak the feedback
+        setSpeaking(true);
+        tts.speak(message).finally(() => {
+          setSpeaking(false);
+        });
+      }
     } else {
-      // Extract the "I see:" section for recipe phase
+      console.log("=== Updating Recipe Progress ===");
+      console.log("Current steps state:", steps);
+      console.log(
+        "Current completed steps:",
+        Array.from(completedSteps.entries())
+      );
+
+      // Extract the "I see:" and "I say:" sections
       const seeSection = text.split("I see:")[1]?.split("I say:")[0]?.trim();
-      if (!seeSection) return;
+      const saySection = text.split("I say:")[1]?.trim();
+
+      if (!seeSection) {
+        console.log("No 'I see' section found in response");
+        return;
+      }
+
+      console.log("Extracted 'I see' section:", seeSection);
 
       // Parse the steps Gemini currently sees being performed
       const currentlySeenSteps = seeSection
@@ -254,37 +345,58 @@ const VideoStream = () => {
 
       console.log("Currently seen steps:", currentlySeenSteps);
 
-      // Only update steps that are currently being performed
-      setSteps((prev) =>
-        prev.map((item) => {
-          // If already completed, keep it completed
-          if (item.completed) {
-            console.log(`${item.text}: already completed`);
-            return item;
-          }
+      let stepCompleted = false;
+      let completedStepText = "";
 
-          // Check if this step is currently being performed
-          const isCurrentlyPerformed = currentlySeenSteps.some(
-            (seen) => seen.toLowerCase() === item.text.toLowerCase()
-          );
+      // Update steps based on what Gemini sees
+      setSteps((prev) => {
+        const updatedSteps = prev.map((item) => {
+          if (item.completed) return item;
 
-          if (isCurrentlyPerformed) {
-            console.log(`Step completed: ${item.text}`);
+          // Check if this step is being performed
+          const isCurrentlyPerformed = currentlySeenSteps.some((seen) => {
+            const seenLower = seen.toLowerCase();
+            const itemLower = item.text.toLowerCase();
+            return (
+              seenLower.includes(itemLower) || itemLower.includes(seenLower)
+            );
+          });
+
+          if (isCurrentlyPerformed && !item.completed) {
+            console.log(`Marking step as completed: ${item.text}`);
+            stepCompleted = true;
+            completedStepText = item.text;
+
             // Update completed steps history
-            const newMap = new Map(completedStepsRef.current);
-            if (!newMap.has(item.text.toLowerCase())) {
-              newMap.set(item.text.toLowerCase(), item.text);
-              completedStepsRef.current = newMap;
-              setCompletedSteps(newMap);
-            }
+            const newMap = new Map(completedSteps);
+            newMap.set(item.text.toLowerCase(), item.text);
+            setCompletedSteps(newMap);
           }
 
           return {
             ...item,
-            completed: isCurrentlyPerformed,
+            completed: item.completed || isCurrentlyPerformed,
           };
-        })
-      );
+        });
+
+        console.log("Updated steps state:", updatedSteps);
+        return updatedSteps;
+      });
+
+      // Speak feedback when a step is completed
+      if (stepCompleted && saySection) {
+        console.log("Speaking feedback for completed step:", completedStepText);
+
+        // Check if the completed step contains "minutes"
+        if (completedStepText.toLowerCase().includes("minutes")) {
+          setShowTimer(true);
+        }
+
+        setSpeaking(true);
+        tts.speak(saySection).finally(() => {
+          setSpeaking(false);
+        });
+      }
     }
   };
 
@@ -319,33 +431,45 @@ const VideoStream = () => {
   };
 
   const handlePhaseTransition = async () => {
-    setShowTransition(true);
-    const readyMessage =
-      "Great! You have all the ingredients ready. Let's start cooking!";
-    setAnalysis(readyMessage);
-    setSpeaking(true);
-    await tts.speak(readyMessage);
+    try {
+      setShowTransition(true);
 
-    // Reset states for recipe phase
-    setPreparationPhase(false);
-    setLastCompletedIngredient(null);
-    seenIngredientsRef.current = new Map();
-    setSeenIngredients(new Map());
-    setSeenHistory("");
+      // Stop any ongoing speech
+      tts.stop();
 
-    // Hide transition message after a delay
-    setTimeout(() => {
+      // Clear states for recipe phase
+      setPreparationPhase(false);
+      setLastCompletedIngredient(null);
+      setSeenIngredients(new Map());
+      setSeenHistory("");
+      completedStepsRef.current = new Map();
+      setCompletedSteps(new Map());
+
+      // Announce phase transition and first step
+      const firstStep = steps.find((step) => !step.completed);
+      const transitionMessage = `Great! You have all the ingredients ready. Let's start cooking! Your first step is to ${firstStep?.text}.`;
+
+      setAnalysis(transitionMessage);
+      setSpeaking(true);
+      await tts.speak(transitionMessage);
+      setSpeaking(false);
+
+      // Hide transition message after delay
+      setTimeout(() => {
+        setShowTransition(false);
+      }, 3000);
+
+      // Resume analysis after transition
+      await analyzeStream();
+    } catch (error) {
+      console.error("Error during phase transition:", error);
+      setSpeaking(false);
       setShowTransition(false);
-    }, 3000);
+    }
   };
 
   const analyzeStream = async () => {
     if (speaking || analysisInProgress.current) {
-      console.log(
-        speaking
-          ? "Bot is speaking, skipping analysis"
-          : "Analysis in progress, skipping"
-      );
       return;
     }
 
@@ -355,74 +479,62 @@ const VideoStream = () => {
 
       const image = await captureImage();
       if (image) {
-        // Format history based on phase
+        // Format history based on current phase using state instead of ref
         const formattedHistory = preparationPhase
-          ? Array.from(seenIngredientsRef.current.values())
+          ? Array.from(seenIngredients.values())
               .map((ing) => `- ${ing}`)
               .join("\n")
           : Array.from(completedStepsRef.current.values())
               .map((step) => `- ${step}`)
               .join("\n");
 
-        console.log(
-          `Current ${preparationPhase ? "ingredient" : "step"} history:`,
-          formattedHistory
-        );
-
         let result;
-        if (preparationPhase || !allIngredientsReady) {
+        if (preparationPhase) {
+          // Use ingredientGemini during preparation phase
           result = await ingredientGemini.analyzeImage(
             image,
             ingredients,
             formattedHistory || "This is my first observation."
           );
         } else {
-          // Only use recipe Gemini when all ingredients are ready and we're in recipe phase
+          // Use recipeGemini during recipe phase
           const { nextStep, followingStep } = getNextIncompleteStep();
-          result = await recipeGemini.analyzeImage(
-            image,
-            nextStep?.text || null,
-            followingStep?.text || null,
-            formattedHistory
-          );
-        }
 
-        console.log("Received Gemini response:", result);
+          // Only proceed with recipe analysis if we have steps to complete
+          if (nextStep) {
+            result = await recipeGemini.analyzeImage(
+              image,
+              nextStep.text,
+              followingStep?.text || null,
+              formattedHistory || "Starting the recipe phase."
+            );
+          } else {
+            await checkCompletion();
+            return;
+          }
+        }
 
         // Update progress based on response
         updateProgress(result);
 
-        // Set full response as analysis text
+        // Set analysis text but don't speak unless there's a change
         setAnalysis(result);
-
-        // Extract only the "I say" portion for speech
-        const saySection = result.split("I say:")[1]?.trim();
-        if (saySection) {
-          console.log("Speaking:", saySection);
-          setSpeaking(true);
-          await tts.speak(saySection);
-          setSpeaking(false);
-        }
 
         // Handle phase transition
         if (preparationPhase && allIngredientsReady) {
           await handlePhaseTransition();
         }
 
-        // Add completion check to analyzeStream
         await checkCompletion();
       }
     } catch (error) {
       console.error("Failed to analyze stream:", error);
-      const errorMessage =
-        "I had trouble seeing what you're doing. Please make sure the ingredients are visible.";
-      setAnalysis(errorMessage);
-      // Don't speak error messages during ingredient selection
+      setAnalysis(
+        "I had trouble seeing what you're doing. Please make sure everything is visible."
+      );
     } finally {
-      setSpeaking(false);
       analysisInProgress.current = false;
       setIsAnalyzing(false);
-      console.log("Analysis completed");
       scheduleNextAnalysis();
     }
   };
@@ -448,15 +560,6 @@ const VideoStream = () => {
       tts.stop();
     };
   }, []); // Run once on mount
-
-  // Only reset seen ingredients when explicitly transitioning to recipe phase
-  useEffect(() => {
-    if (!preparationPhase) {
-      seenIngredientsRef.current = new Map();
-      setSeenIngredients(new Map());
-      setSeenHistory("");
-    }
-  }, [preparationPhase]);
 
   // Reset completed steps when starting recipe phase
   useEffect(() => {
@@ -510,14 +613,14 @@ const VideoStream = () => {
   return (
     <Box
       sx={{
-        minHeight: '100vh',
-        width: '100%',
+        minHeight: "100vh",
+        width: "100%",
         backgroundColor: preparationPhase ? colors.greenBg : colors.orangeBg,
-        transition: 'background-color 0.8s ease',
-        position: 'relative',
+        transition: "background-color 0.8s ease",
+        position: "relative",
         margin: 0,
         padding: 0,
-        overflow: 'hidden',
+        overflow: "hidden",
       }}
     >
       {/* Phase Header */}
@@ -580,21 +683,23 @@ const VideoStream = () => {
       </Box>
 
       {/* Main Content */}
-      <Box sx={{ display: 'flex', width: '100%', height: 'calc(100vh - 80px)' }}>
+      <Box
+        sx={{ display: "flex", width: "100%", height: "calc(100vh - 80px)" }}
+      >
         {/* Left Side - Lists and Avatar (1/3 width) */}
         <Box
           sx={{
-            width: '33.333%',
-            height: '100%',
+            width: "33.333%",
+            height: "100%",
             p: 2,
-            display: 'flex',
-            flexDirection: 'column',
+            display: "flex",
+            flexDirection: "column",
             gap: 2,
             borderRight: `1px solid ${colors.orange}22`,
           }}
         >
           {/* Lists Section */}
-          <Box sx={{ flex: 1, overflowY: 'auto' }}>
+          <Box sx={{ flex: 1, overflowY: "auto" }}>
             {preparationPhase ? (
               <Paper elevation={3} sx={{ p: 2, mb: 2 }}>
                 <Typography variant="h6" gutterBottom>
@@ -606,8 +711,12 @@ const VideoStream = () => {
                       <ListItemText
                         primary={item.text}
                         sx={{
-                          textDecoration: item.completed ? "line-through" : "none",
-                          color: item.completed ? "text.disabled" : "text.primary",
+                          textDecoration: item.completed
+                            ? "line-through"
+                            : "none",
+                          color: item.completed
+                            ? "text.disabled"
+                            : "text.primary",
                         }}
                       />
                     </ListItem>
@@ -625,8 +734,12 @@ const VideoStream = () => {
                       <ListItemText
                         primary={item.text}
                         sx={{
-                          textDecoration: item.completed ? "line-through" : "none",
-                          color: item.completed ? "text.disabled" : "text.primary",
+                          textDecoration: item.completed
+                            ? "line-through"
+                            : "none",
+                          color: item.completed
+                            ? "text.disabled"
+                            : "text.primary",
                         }}
                       />
                     </ListItem>
@@ -639,13 +752,28 @@ const VideoStream = () => {
           {/* Avatar Section */}
           <Box
             sx={{
-              display: 'flex',
-              justifyContent: 'center',
+              display: "flex",
+              justifyContent: "center",
               p: 2,
-              backgroundColor: 'rgba(255, 107, 53, 0.05)',
-              borderRadius: '12px',
+              backgroundColor: "rgba(255, 107, 53, 0.05)",
+              borderRadius: "12px",
+              position: "relative",
             }}
           >
+            {showTimer && (
+              <Timer
+                duration={10}
+                onComplete={() => {
+                  setShowTimer(false);
+                  setSpeaking(true);
+                  tts
+                    .speak("Time's up! Let's continue with the next step.")
+                    .finally(() => {
+                      setSpeaking(false);
+                    });
+                }}
+              />
+            )}
             <ChefAvatar speaking={speaking} locale={currentLocale} />
           </Box>
         </Box>
@@ -653,11 +781,11 @@ const VideoStream = () => {
         {/* Right Side - Video and Chat (2/3 width) */}
         <Box
           sx={{
-            width: '66.666%',
-            height: '100%',
+            width: "66.666%",
+            height: "100%",
             p: 2,
-            display: 'flex',
-            flexDirection: 'column',
+            display: "flex",
+            flexDirection: "column",
           }}
         >
           {/* Video Container */}
@@ -667,9 +795,9 @@ const VideoStream = () => {
               flex: 1,
               mb: 2,
               borderRadius: 2,
-              overflow: 'hidden',
-              position: 'relative',
-              filter: isCompleted ? 'brightness(0.5)' : 'none',
+              overflow: "hidden",
+              position: "relative",
+              filter: isCompleted ? "brightness(0.5)" : "none",
             }}
           >
             <video
@@ -678,9 +806,9 @@ const VideoStream = () => {
               playsInline
               muted={isCompleted}
               style={{
-                width: '100%',
-                height: '100%',
-                objectFit: 'cover',
+                width: "100%",
+                height: "100%",
+                objectFit: "cover",
               }}
             />
           </Paper>
@@ -692,12 +820,12 @@ const VideoStream = () => {
               p: 2,
               backgroundColor: "#f5f5f5",
               borderRadius: "12px",
-              height: '100px',
-              display: 'flex',
-              alignItems: 'center',
+              height: "100px",
+              display: "flex",
+              alignItems: "center",
             }}
           >
-            <Typography 
+            <Typography
               variant="body1"
               sx={{
                 fontFamily: theme.fonts.body,
@@ -718,14 +846,14 @@ const VideoStream = () => {
       {/* CompletionDialog */}
       <Box
         sx={{
-          position: 'fixed',
+          position: "fixed",
           top: 0,
           left: 0,
           right: 0,
           bottom: 0,
-          backgroundColor: 'rgba(0, 0, 0, 0.7)',
+          backgroundColor: "rgba(0, 0, 0, 0.7)",
           zIndex: 1000,
-          display: showCompletionDialog ? 'block' : 'none',
+          display: showCompletionDialog ? "block" : "none",
         }}
       >
         <CompletionDialog
@@ -745,7 +873,7 @@ const VideoStream = () => {
       <SpeedDial
         ariaLabel="Voice Locale SpeedDial"
         sx={{
-          position: 'fixed',
+          position: "fixed",
           bottom: 16,
           right: 16,
         }}
@@ -759,17 +887,20 @@ const VideoStream = () => {
                 sx={{
                   width: 32,
                   height: 32,
-                  borderRadius: '50%',
-                  border: locale === currentLocale ? '2px solid #FF6B35' : 'none',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
+                  borderRadius: "50%",
+                  border:
+                    locale === currentLocale ? "2px solid #FF6B35" : "none",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
                   fontWeight: 600,
-                  fontSize: '0.8rem',
-                  color: locale === currentLocale ? '#FF6B35' : 'inherit',
+                  fontSize: "0.8rem",
+                  color: locale === currentLocale ? "#FF6B35" : "inherit",
                 }}
               >
-                {locale.split('-')[0].toUpperCase()}
+                {locale === "grandma"
+                  ? "👵"
+                  : locale.split("-")[0].toUpperCase()}
               </Box>
             }
             tooltipTitle={localeNames[locale]}
@@ -843,7 +974,18 @@ function Welcome() {
         }}
       />
 
-      <Container maxWidth="md" sx={{ position: "relative", zIndex: 1 }}>
+      <Container
+        maxWidth="md"
+        sx={{
+          position: "relative",
+          zIndex: 1,
+          p: 0, // Remove padding
+          "&.MuiContainer-root": {
+            // Override MUI's default padding
+            padding: 0,
+          },
+        }}
+      >
         <Box
           component={motion.div}
           variants={staggerContainer}
@@ -854,7 +996,7 @@ function Welcome() {
             alignItems: "center",
             justifyContent: "center",
             gap: 6,
-            py: 4,
+            py: 0, // Remove vertical padding
           }}
         >
           {!started ? (
