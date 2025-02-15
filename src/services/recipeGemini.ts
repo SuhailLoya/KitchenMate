@@ -1,15 +1,16 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
+import { GenerativeModel } from "@google/generative-ai";
 
 export class RecipeGeminiService {
-  private genAI: GoogleGenerativeAI;
-  private model: any;
+  private gemini: GoogleGenerativeAI;
+  private model: GenerativeModel;
 
   constructor(apiKey: string) {
-    this.genAI = new GoogleGenerativeAI(apiKey);
-    this.model = this.genAI.getGenerativeModel({
+    this.gemini = new GoogleGenerativeAI(apiKey);
+    this.model = this.gemini.getGenerativeModel({
       model: "gemini-1.5-flash",
       generationConfig: {
-        temperature: 0.4, // Slightly higher temperature for more natural cooking instructions
+        temperature: 0.2, // Lower temperature for more precise ingredient detection
         topP: 0.8,
         topK: 40,
         maxOutputTokens: 200,
@@ -21,70 +22,89 @@ export class RecipeGeminiService {
     image: Blob,
     currentStep: string | null,
     nextStep: string | null,
-    seenHistory: string
-  ) {
+    history: string
+  ): Promise<string> {
     try {
-      console.log("Starting Recipe Step Analysis...");
+      console.log("=== Starting Recipe Analysis ===");
+      console.log("Current step:", currentStep);
+      console.log("Next step:", nextStep);
+      console.log("Action history:", history);
 
-      const context = `You are a friendly chef assistant helping someone follow a cake recipe.
-        
-        Current step to complete:
-        - ${currentStep || "All steps completed!"}
+      const prompt = `You are a cooking assistant analyzing a video stream. 
 
-        Next step will be:
-        - ${nextStep || "Recipe will be complete!"}
-        
-        Previously completed steps:
-        ${seenHistory || "Just starting the recipe."}
-        
-        IMPORTANT: Structure your response EXACTLY as follows and use the EXACT step descriptions:
-        
-        I saw: [List ALL previously completed steps using their exact descriptions, each on a new line with a dash prefix]
-        I see: [Describe ONLY the current cooking action you observe, using EXACT match to step description if you see it being performed]
-        I say: [Your friendly response about progress]
+Current recipe step to check: ${currentStep || "No current step"}
+Next step to prepare for: ${nextStep || "No next step"}
 
-        Example response format:
-        I saw:
-        - Crack 3 eggs into a large mixing bowl
-        - Pour 1 cup of milk into the bowl with eggs
-        I see:
-        - Add 1 cup of sugar to the mixture
-        I say: Great job adding the sugar! Next, you'll need to mix in the melted butter.
+Previous actions completed:
+${history || "No actions completed yet"}
 
-        CRITICAL RULES:
-        1. When listing steps in "I saw:" and "I see:", use EXACTLY the same text as shown in the step descriptions
-        2. Only list a step in "I see:" if you are 100% certain the action is being performed right now
-        3. Each step must start with "- " and be on a new line
-        4. Don't abbreviate or modify the step descriptions
-        5. Only mark a step as seen if ALL parts of the step are being performed (e.g., correct ingredients and actions)
+CRITICAL RULES:
+1. In the "I see:" section, ONLY list actions that EXACTLY match the current step
+2. Do not mention any actions that don't precisely match the current step
+3. If you see an action being performed but it doesn't match the current step, do not list it
+4. As long as the image shows the current step being performed, you can acknowledge it and move on.
 
-        Current image analysis starting now.`;
+Format your response as follows:
+I see:
+- [ONLY list the current step if you see it being performed EXACTLY as described]
 
-      const imageData = await this.blobToGenerativePart(image);
-      const result = await this.model.generateContent([context, imageData]);
-      return result.response.text();
+I say:
+[Provide feedback based on what you see. Be encouraging and specific about what you're waiting to see for the current step]
+
+Example responses:
+
+Good response (when seeing the correct action):
+I see:
+- Crack 3 eggs into a large mixing bowl
+
+I say: Perfect! I can see you cracking the eggs into the bowl. Let's move on to the next step.
+
+Good response (when not seeing the correct action):
+I see:
+[empty because current step not seen]
+
+I say: I'm waiting to see you crack 3 eggs into a large mixing bowl. Make sure to use all 3 eggs.
+
+Keep your response focused and concise. Only acknowledge step completion when you see the EXACT action being performed.`;
+
+      console.log("=== Prompt being sent to Gemini ===");
+      console.log(prompt);
+
+      const imageParts = [
+        {
+          inlineData: {
+            data: await this.blobToBase64(image),
+            mimeType: "image/jpeg",
+          },
+        },
+      ];
+
+      const result = await this.model.generateContent([prompt, ...imageParts]);
+      const response = await result.response;
+      const text = response.text();
+
+      console.log("=== Gemini Response ===");
+      console.log(text);
+
+      return text;
     } catch (error) {
       console.error("Recipe analysis failed:", error);
       throw error;
     }
   }
 
-  private async blobToGenerativePart(blob: Blob) {
-    const base64String = await new Promise<string>((resolve) => {
+  private async blobToBase64(blob: Blob): Promise<string> {
+    return new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.onloadend = () => {
-        const base64 = reader.result as string;
-        const base64Data = base64.split(",")[1];
-        resolve(base64Data);
+        if (typeof reader.result === "string") {
+          resolve(reader.result.split(",")[1]);
+        } else {
+          reject(new Error("Failed to convert blob to base64"));
+        }
       };
+      reader.onerror = reject;
       reader.readAsDataURL(blob);
     });
-
-    return {
-      inlineData: {
-        data: base64String,
-        mimeType: blob.type,
-      },
-    };
   }
 }
