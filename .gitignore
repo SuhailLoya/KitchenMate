@@ -35,5 +35,4 @@ yarn-error.log*
 # Optional eslint cache
 .eslintcache
 
-# New image format support
-src/images/*.png
+
