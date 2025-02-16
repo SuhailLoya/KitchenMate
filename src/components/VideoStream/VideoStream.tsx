@@ -51,13 +51,15 @@ const initialIngredients: RecipeItem[] = [
 ];
 
 const initialSteps: RecipeItem[] = [
-  //   { text: "Crack 3 eggs into a large mixing bowl", completed: false },
-  //   { text: "Pour 1 cup of milk into the bowl", completed: false },
+  { text: "Crack eggs into a large mixing bowl", completed: false },
+  { text: "Pour milk into the bowl", completed: false },
   //   //   { text: "Add 1 cup of sugar to the mixture", completed: false },
-  //   { text: "Mix in the butter", completed: false },
-  { text: "Bake the mixture in the oven for 10 minutes", completed: false },
-  { text: "Crack 3 eggs into a large mixing bowl", completed: false },
-  //   { text: "Gradually add 2 cups of flour while stirring", completed: false },
+  { text: "Mix in the butter", completed: false },
+  {
+    text: "Bake the mixture in the microwave for 10 minutes",
+    completed: false,
+  },
+  { text: "Show me a thumbs up", completed: false },
 ];
 
 // First, update the colors at the top of the file (before the VideoStream component)
@@ -484,20 +486,21 @@ const VideoStream = () => {
           ? Array.from(seenIngredients.values())
               .map((ing) => `- ${ing}`)
               .join("\n")
-          : Array.from(completedStepsRef.current.values())
+          : Array.from(completedSteps.values())
               .map((step) => `- ${step}`)
               .join("\n");
 
         let result;
+        // Only use ingredientGemini during preparation phase
         if (preparationPhase) {
-          // Use ingredientGemini during preparation phase
+          console.log("Using ingredientGemini for preparation phase");
           result = await ingredientGemini.analyzeImage(
             image,
             ingredients,
             formattedHistory || "This is my first observation."
           );
         } else {
-          // Use recipeGemini during recipe phase
+          console.log("Using recipeGemini for recipe phase");
           const { nextStep, followingStep } = getNextIncompleteStep();
 
           // Only proceed with recipe analysis if we have steps to complete
@@ -516,8 +519,6 @@ const VideoStream = () => {
 
         // Update progress based on response
         updateProgress(result);
-
-        // Set analysis text but don't speak unless there's a change
         setAnalysis(result);
 
         // Handle phase transition
@@ -875,21 +876,28 @@ const VideoStream = () => {
         sx={{
           position: "fixed",
           bottom: 16,
-          right: 16,
+          left: 16,
+          "& .MuiSpeedDial-actions": {
+            paddingLeft: 2,
+          },
         }}
+        direction="right"
         icon={<SpeedDialIcon icon={<TranslateIcon />} />}
       >
         {(Object.keys(localeNames) as VoiceLocale[]).map((locale) => (
           <SpeedDialAction
             key={locale}
+            sx={{
+              position: "relative",
+              margin: "0 4px",
+            }}
             icon={
               <Box
                 sx={{
                   width: 32,
                   height: 32,
                   borderRadius: "50%",
-                  border:
-                    locale === currentLocale ? "2px solid #FF6B35" : "none",
+                  border: locale === currentLocale ? "2px solid #FF6B35" : "none",
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "center",
@@ -898,9 +906,7 @@ const VideoStream = () => {
                   color: locale === currentLocale ? "#FF6B35" : "inherit",
                 }}
               >
-                {locale === "grandma"
-                  ? "👵"
-                  : locale.split("-")[0].toUpperCase()}
+                {locale === "grandma" ? "👵" : locale.split("-")[0].toUpperCase()}
               </Box>
             }
             tooltipTitle={localeNames[locale]}
